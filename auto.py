@@ -10,18 +10,17 @@ import os
 no_sending = False
 # username, host, port, password
 class SSH():
-    def __init__(self, username=None, host=None, port=None, password='', log=True):
+    def __init__(self, username=None, host=None, port=None, password='', logfile=None):
         if not username:
-            self.ssh_child = pexpect.spawn(username, encoding='utf-8', timeout=None)
+            self.ssh_child = pexpect.spawn('cd', encoding='utf-8', timeout=None, logfile=logfile)
         else:
-            self.ssh_child = pexpect.spawn("ssh %s@%s -p %d"%(username,host,port), encoding='utf-8', timeout=None) #  -o StrictHostKeyChecking=no
-        if log:
-           self.ssh_child.logfile = sys.stdout
+            self.ssh_child = pexpect.spawn("ssh %s@%s -p %d"%(username,host,port), encoding='utf-8', timeout=None, logfile=logfile) #  -o StrictHostKeyChecking=no
+
         self._expect = ""
         self.used_expect = False
         self.password = password
 
-        if username != 'root':
+        if username != None and username != 'root':
             self.login(password)
 
     def log(self, yes):
@@ -40,7 +39,7 @@ class SSH():
             self.send(password)
         
     def yesno(self,yes=True):
-        while self.expect(["yes[\\/\\\]no.*",pexpect.EOF,pexpect.TIMEOUT], timeout=5) == 0:
+        while self.expect(["yes[\\/\\\]no.*",pexpect.EOF,pexpect.TIMEOUT], timeout=5) <= 1:
             if yes:
                 self.send("yes")
             else:
@@ -105,6 +104,7 @@ class Automator():
         self.ssh_configs = {}
         self.store = {}
         self.output = []
+        self.__log = None
 
     def doInstruction (self, instr):
         instr_to_fn = {
@@ -122,17 +122,19 @@ class Automator():
         print("[%s] <- %s@%s:%s %s"%(args['name'], args['user'], args['host'], args['port'], '(w/ pass)' if args['pass'] else ''))
 
     def local_cmd (self, args):
+        self.log('log' in args and args['log'] == True)
         if self.child:
             self.child.close()
         self.cmd(args, 'local')
 
     def ssh_cmd (self, args):
         name = args['name'] or '_default'
+        self.log('log' in args and args['log'] == True)
         if self.child:
             self.child.close()
         if name in self.ssh_configs:
             ssh_args = self.ssh_configs[name]
-            self.child = SSH(ssh_args['user'], ssh_args['host'], ssh_args['port'], ssh_args['pass'], log=('log' in args and args['log'] == True))
+            self.child = SSH(ssh_args['user'], ssh_args['host'], ssh_args['port'], ssh_args['pass'], logfile=self.__log)
             self.child.name = name
             self.cmd(args, self.child)
         else:
@@ -141,6 +143,11 @@ class Automator():
     def close (self):
         if self.child:
             self.child.close()
+
+    def log (self, yes):
+        if self.child:
+            self.child.__log(yes)
+        self.__log = (sys.stdout if yes else None)
 
     def cmd (self, args, child):
         local = (child == 'local')
@@ -159,11 +166,11 @@ class Automator():
                 if 'args' in line_info:
                     store = [self.store[k] if k in self.store else sys.exit("Error: arg '{}' not found!".format(k)) for k in line_info['args']]
                     line = line.format(*store)
-                print('%s %s'%(header, line))
+                print('{} {}'.format(header, line))
 
                 # save output
                 if local:
-                    self.output.append(pexpect.run(line))
+                    self.output.append(sp.Popen(['echo "hey there" > ~/test.txt'], shell=True, stdout=self.__log, cwd=(line_info['cwd'] if 'cwd' in line_info else None)))
                 else:
                     child.send(line)
                     self.output.append(child.ssh_child.readline())
@@ -200,7 +207,7 @@ class Automator():
                 child.yesno(line_info['yesno'] == True)
 
             if 'log' in line_info:
-                child.log(line_info['log'])
+                self.log(line_info['log'])
 
 import importlib.util
 
