@@ -40,17 +40,17 @@ class SSH():
             self.send(password)
         
     def yesno(self,yes=True):
-        while self.expect(["yes[\\/\\\]no.*",pexpect.EOF,pexpect.TIMEOUT],timeout=5) == 0:
+        while self.expect(["yes[\\/\\\]no.*",pexpect.EOF,pexpect.TIMEOUT], timeout=5) == 0:
             if yes:
                 self.send("yes")
             else:
                 self.send("no")
 
-    def expect(self,expect):
+    def expect(self,expect, timeout=-1):
         if not no_sending:
             self.used_expect = True
             self._expect = expect
-            return self.ssh_child.expect(expect)
+            return self.ssh_child.expect(expect, timeout)
 
     def real_expect(self, expect):
         self.ssh_child.expect(expect)
@@ -113,7 +113,8 @@ class Automator():
             'ssh_cmd':self.ssh_cmd
         }
         fn = instr_to_fn.get(instr['type'], lambda args: "Invalid instruction type")
-        fn(instr)
+        if not 'skip' in instr or instr['skip'] != True:
+            fn(instr)
 
     def ssh_config (self, args):
         name = args['name'] or '_default'
@@ -131,7 +132,7 @@ class Automator():
             self.child.close()
         if name in self.ssh_configs:
             ssh_args = self.ssh_configs[name]
-            self.child = SSH(ssh_args['user'], ssh_args['host'], ssh_args['port'], ssh_args['pass'], log=('log' in ssh_args and ssh_args['log']))
+            self.child = SSH(ssh_args['user'], ssh_args['host'], ssh_args['port'], ssh_args['pass'], log=('log' in args and args['log'] == True))
             self.child.name = name
             self.cmd(args, self.child)
         else:
@@ -156,7 +157,7 @@ class Automator():
                     line = line.replace(old, new)
                 # gather stored variables user wants to use
                 if 'args' in line_info:
-                    store = [self.store[k] for k in line_info['args'] if k in self.store]
+                    store = [self.store[k] if k in self.store else sys.exit("Error: arg '{}' not found!".format(k)) for k in line_info['args']]
                     line = line.format(*store)
                 print('%s %s'%(header, line))
 
@@ -165,7 +166,7 @@ class Automator():
                     self.output.append(pexpect.run(line))
                 else:
                     child.send(line)
-                    self.output.append(child.ssh_child.before)
+                    self.output.append(child.ssh_child.readline())
 
             if 'expect' in line_info and not local:
                 child.expect(line_info['expect'])
@@ -176,15 +177,30 @@ class Automator():
                 child.send(child.password)
 
             if 'store' in line_info:
-                self.store[line_info['store']] = self.output[-1]
-                print('%s -> (%s)'%(header, line_info['store']))
+                val = ''
+                if local:
+                    val = self.output[-1]
+                else:
+                    val = child.readline()
 
-                # get previous commands output
-                pass
+                if 'args' in line_info:
+                    if 'strip' in line_info['args']:
+                        val = val.strip()
+                if 'decode' in line_info:
+                    val = val.decode(line_info['decode'])
+
+                self.store[line_info['store']] = val
+                print('%s -> (%s)'%(header, line_info['store']))
 
             if 'fn' in line_info:
                 line_info['fn'](FnHelper(self))
 
+            if 'yesno' in line_info:
+                print("%s %s"%(header, "YES/no" if line_info['yesno'] else "yes/NO"))
+                child.yesno(line_info['yesno'] == True)
+
+            if 'log' in line_info:
+                child.log(line_info['log'])
 
 import importlib.util
 
