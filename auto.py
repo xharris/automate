@@ -1,3 +1,36 @@
+'''
+skip (true/false)
+type (ssh_config, local_cmd, ssh_cmd)
+
+    ssh_config: name, user, host, port, [pass]
+
+    cmd: lines
+
+        local_cmd: --
+
+        ssh_cmd: name
+
+    > lines[]:
+        cmd (line to exec), args (used like cmd.format(*args)), cwd (local)
+
+        expect
+
+        pass (value is expect string)
+
+        store (save last output given key name), args (strip), decode (string decoding)
+
+        fn (reference to python function, arg1 is FnHelper)
+
+        yesno (true/false is yes/no)
+
+        log (true/false to set logging)
+
+FnHelper
+    - output() : returns array of output history
+    - get(key) : returns stored key 
+    - store(key, val) : stores a value as key
+'''
+
 import pexpect, sys, json
 
 expect = {
@@ -10,7 +43,7 @@ import os
 no_sending = False
 # username, host, port, password
 class SSH():
-    def __init__(self, username=None, host=None, port=None, password='', logfile=None):
+    def __init__(self, username=None, host=None, port=22, password='', logfile=None):
         if not username:
             self.ssh_child = pexpect.spawn('cd', encoding='utf-8', timeout=None, logfile=logfile)
         else:
@@ -118,6 +151,7 @@ class Automator():
 
     def ssh_config (self, args):
         name = args['name'] or '_default'
+        args['port'] = args['port'] if 'port' in args else 22
         self.ssh_configs[name] = args
         print("[%s] <- %s@%s:%s %s"%(args['name'], args['user'], args['host'], args['port'], '(w/ pass)' if args['pass'] else ''))
 
@@ -222,3 +256,5 @@ if len(sys.argv) > 1:
             for i, instr in enumerate(script.instructions):
                 auto.doInstruction(instr)
             auto.close()
+else:
+    print("No automation steps given")
