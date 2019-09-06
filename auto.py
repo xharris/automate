@@ -37,24 +37,29 @@ expect = {
     'eof': pexpect.EOF
 }
 
+import paramiko
 import subprocess as sp
 import os
 
 no_sending = False
 # username, host, port, password
 class SSH():
+    DEFAULT_EXPECT = "[\$#] "
     def __init__(self, username=None, host=None, port=22, password='', logfile=None):
         if not username:
             self.ssh_child = pexpect.spawn('cd', encoding='utf-8', timeout=None, logfile=logfile)
         else:
             self.ssh_child = pexpect.spawn("ssh %s@%s -p %d"%(username,host,port), encoding='utf-8', timeout=None, logfile=logfile) #  -o StrictHostKeyChecking=no
 
-        self._expect = ""
         self.used_expect = False
         self.password = password
+        self.info = {'username':username,'host':host,'port':port,'password':password}
+
+        self._expect = SSH.DEFAULT_EXPECT
 
         if username != None and username != 'root':
             self.login(password)
+
 
     def log(self, yes):
         if yes:
@@ -63,16 +68,16 @@ class SSH():
             self.ssh_child.logfile = None
 
     def login(self,password):
-        ret = self.expect(["assword: ","yes\\/no.*\\s"])
+        ret = self.real_expect(["assword","yes[\\/\\\]no.*"])
         if ret == 0:
-            self.send(password)
+            self.ssh_child.sendline(password)
         if ret == 1:
-            self.send("yes")
-            self.expect("assword: ")
-            self.send(password)
+            self.ssh_child.sendline("yes")
+            self.real_expect(": ")
+            self.ssh_child.sendline(password)
         
     def yesno(self,yes=True):
-        while self.expect(["yes[\\/\\\]no.*",pexpect.EOF,pexpect.TIMEOUT], timeout=5) <= 1:
+        while self.real_expect([pexpect.EOF,pexpect.TIMEOUT,"yes[\\/\\\]no.*"], timeout=5) > 1:
             if yes:
                 self.send("yes")
             else:
@@ -84,10 +89,10 @@ class SSH():
             self._expect = expect
             return self.ssh_child.expect(expect, timeout)
 
-    def real_expect(self, expect):
-        self.ssh_child.expect(expect)
+    def real_expect(self, expect, timeout=-1):
+        return self.ssh_child.expect(expect, timeout)
 
-    def send(self,line):
+    def send(self,line,expects=None):
         if no_sending:
             print(line)
         else:
@@ -95,6 +100,16 @@ class SSH():
                 self.ssh_child.expect(self._expect)
             self.used_expect = False
             self.ssh_child.sendline(line)
+            if expects:
+                exp_keys = list(expects.keys())
+                if len(exp_keys) > 0:
+                    exp = self.real_expect([pexpect.EOF,pexpect.TIMEOUT] + exp_keys, timeout=5)
+                    while exp > 1:
+                        self.ssh_child.sendline(expects[exp_keys[exp-2]])
+                        exp = self.real_expect([pexpect.EOF,pexpect.TIMEOUT] + exp_keys, timeout=5)
+
+    def real_send(self, line):
+        self.ssh_child.sendline(line)
 
     def output(self,expect):
         self.ssh_child.expect(self.expect)
@@ -143,7 +158,8 @@ class Automator():
         instr_to_fn = {
             'ssh_config':self.ssh_config,
             'local_cmd':self.local_cmd,
-            'ssh_cmd':self.ssh_cmd
+            'ssh_cmd':self.ssh_cmd,
+            'scp':self.scp
         }
         fn = instr_to_fn.get(instr['type'], lambda args: "Invalid instruction type")
         if not 'skip' in instr or instr['skip'] != True:
@@ -180,8 +196,14 @@ class Automator():
 
     def log (self, yes):
         if self.child:
-            self.child.__log(yes)
+            self.child.log(yes)
         self.__log = (sys.stdout if yes else None)
+
+    def scp (self, args):
+        if 'name' in args and args['name'] in self.ssh_configs:
+            print('[%s:%s] <- %s'%(args['name'], args['out_file'], args['in_file']))
+            config = self.ssh_configs[args['name']]
+            SSH.scp(args['in_file'], args['out_file'], config['user'], config['host'], config['port'], config['pass'])
 
     def cmd (self, args, child):
         local = (child == 'local')
@@ -206,15 +228,28 @@ class Automator():
                 if local:
                     self.output.append(sp.Popen(['echo "hey there" > ~/test.txt'], shell=True, stdout=self.__log, cwd=(line_info['cwd'] if 'cwd' in line_info else None)))
                 else:
-                    child.send(line)
+                    expects = None
+                    if 'expects' in line_info:
+                        expects = line_info['expects']
+                    child.send(line, expects)
                     self.output.append(child.ssh_child.readline())
+
+            if 'sudo' in line_info:
+                if line_info['sudo']:
+                    print("[%s] entering root access...")
+                    child.send('sudo su',{
+                        ': ':child.info['password']
+                    })
+                else:
+                    print("[%s] exiting root access...")
+                    child.send('exit')
 
             if 'expect' in line_info and not local:
                 child.expect(line_info['expect'])
 
             if 'pass' in line_info and not local:
                 print("%s <= password"%(header))
-                child.expect(line_info['pass'])
+                child.real_expect(line_info['pass'])
                 child.send(child.password)
 
             if 'store' in line_info:
