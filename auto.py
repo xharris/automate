@@ -39,7 +39,6 @@ expect = {
     'eof': pexpect.EOF
 }
 
-import paramiko
 import subprocess as sp
 import os
 
