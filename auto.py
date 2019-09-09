@@ -11,7 +11,7 @@ type (ssh_config, local_cmd, ssh_cmd)
         ssh_cmd: name
 
     > lines[]:
-        cmd (line to exec), args (used like cmd.format(*args)), cwd (local)
+        cmd (line to exec), args (used like cmd.format(*args)), cwd (local), expects ({prompt:answer, ...})
 
         expect
 
@@ -24,6 +24,8 @@ type (ssh_config, local_cmd, ssh_cmd)
         yesno (true/false is yes/no)
 
         log (true/false to set logging)
+
+        sudo (true/false)
 
 FnHelper
     - output() : returns array of output history
@@ -79,9 +81,9 @@ class SSH():
     def yesno(self,yes=True):
         while self.real_expect([pexpect.EOF,pexpect.TIMEOUT,"yes[\\/\\\]no.*"], timeout=5) > 1:
             if yes:
-                self.send("yes")
+                self.real_send("yes")
             else:
-                self.send("no")
+                self.real_send("no")
 
     def expect(self,expect, timeout=-1):
         if not no_sending:
@@ -197,7 +199,7 @@ class Automator():
     def log (self, yes):
         if self.child:
             self.child.log(yes)
-        self.__log = (sys.stdout if yes else None)
+        self.__log = (sp.PIPE if yes else None)
 
     def scp (self, args):
         if 'name' in args and args['name'] in self.ssh_configs:
@@ -226,7 +228,9 @@ class Automator():
 
                 # save output
                 if local:
-                    self.output.append(sp.Popen(['echo "hey there" > ~/test.txt'], shell=True, stdout=self.__log, cwd=(line_info['cwd'] if 'cwd' in line_info else None)))
+                    # look into shlex.quote()
+                    out, err = sp.Popen([line], shell=True, stdout=sp.PIPE, stderr=sp.PIPE, cwd=(line_info['cwd'] if 'cwd' in line_info else None)).communicate()
+                    self.output.append(str(out, "utf-8"))
                 else:
                     expects = None
                     if 'expects' in line_info:
@@ -250,7 +254,7 @@ class Automator():
             if 'pass' in line_info and not local:
                 print("%s <= password"%(header))
                 child.real_expect(line_info['pass'])
-                child.send(child.password)
+                child.real_send(child.password)
 
             if 'store' in line_info:
                 val = ''
@@ -263,7 +267,8 @@ class Automator():
                     if 'strip' in line_info['args']:
                         val = val.strip()
                 if 'decode' in line_info:
-                    val = val.decode(line_info['decode'])
+                    if not isinstance(val, str):
+                        val = str(val, line_info['decode'])
 
                 self.store[line_info['store']] = val
                 print('%s -> (%s)'%(header, line_info['store']))
