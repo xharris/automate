@@ -104,3 +104,4 @@ venv.bak/
 .mypy_cache/
 
 automate_scripts/
+node_modules
